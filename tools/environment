@@ -1,0 +1,14 @@
+BASE_DIR=$(pwd)
+BIN_DIR=$BASE_DIR/bin
+DISK_IMG_DIR=$BIN_DIR/disk/
+DISK_MOUNT_DIR=$BIN_DIR/mnt/
+U_BOOT_DIR=$BIN_DIR/u-boot/
+QEMU_DIR=$BIN_DIR/qemu/
+BUILDROOT_DIR=$BIN_DIR/buildroot
+DISK_IMG=$BIN_DIR/disk.img
+BINARY_NAME=mini.elf
+
+QEMU=$(which $QEMU_DIR/bin/qemu-system-aarch64 2> /dev/null) || \
+    QEMU=$(which qemu-system-aarch64 2> /dev/null)
+
+mkdir -p $DISK_IMG_DIR $DISK_MOUNT_DIR
