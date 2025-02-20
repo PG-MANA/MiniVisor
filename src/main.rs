@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+mod dtb;
+
 use core::arch::asm;
 
 #[unsafe(no_mangle)]
