@@ -1,7 +1,7 @@
 setenv autostart yes
 
 if load virtio 0 $kernel_addr_r mini.elf; then
-	bootelf $kernel_addr_r $fdt_addr
+	bootelf $kernel_addr_r $fdt_addr $kernel_addr_r
 else
 	echo "Unable to read mini.elf"
 fi

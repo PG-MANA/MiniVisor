@@ -62,6 +62,10 @@ impl Dtb {
         Ok(Self { header: fdt_header })
     }
 
+    pub fn get_total_size(&self) -> usize {
+        u32::from_be(unsafe { &*(self.header) }.total_size) as usize
+    }
+
     fn compare_name_segment(
         &self,
         name_offset: u32,
