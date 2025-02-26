@@ -10,6 +10,7 @@ mod drivers {
 }
 mod elf;
 mod memory_allocator;
+mod paging;
 mod registers;
 
 use registers::*;
@@ -62,6 +63,11 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         .expect("Failed to get argv[1]");
     let elf_address = str_to_usize(arg_1).expect("Failed to convert the address");
     setup_memory(&dtb, dtb_address, elf_address, stack_pointer);
+
+    /* Stage 2 Translation の初期化 */
+    paging::init_stage2_translation_table();
+    paging::map_address_stage2(0x40000000, 0x40000000, 0x80000000, true, true)
+        .expect("Failed to map memory");
 
     setup_hypervisor_registers();
 
@@ -140,7 +146,7 @@ fn init_serial_port(dtb: &dtb::Dtb) -> Result<(), usize> {
 
 pub fn setup_hypervisor_registers() {
     /* HCR_EL2 */
-    let hcr_el2 = HCR_EL2_RW | HCR_EL2_API;
+    let hcr_el2 = HCR_EL2_RW | HCR_EL2_API | HCR_EL2_VM;
     unsafe { asm::set_hcr_el2(hcr_el2) };
 }
 
