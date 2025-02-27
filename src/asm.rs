@@ -68,3 +68,39 @@ pub fn flush_tlb_el1() {
         );
     }
 }
+
+pub unsafe fn set_vbar_el2(vbar_el2: u64) {
+    unsafe { asm!("msr vbar_el2, {}", in(reg) vbar_el2) };
+}
+
+pub fn get_elr_el2() -> u64 {
+    let elr_el2: u64;
+    unsafe { asm!("mrs {}, elr_el2", out(reg) elr_el2) };
+    elr_el2
+}
+
+pub unsafe fn advance_elr_el2() {
+    unsafe { set_elr_el2(get_elr_el2() + 4) }
+}
+
+pub fn get_esr_el2() -> u64 {
+    let esr_el2: u64;
+    unsafe { asm!("mrs {}, esr_el2", out(reg) esr_el2) };
+    esr_el2
+}
+
+pub fn get_far_el2() -> u64 {
+    let far_el2: u64;
+    unsafe { asm!("mrs {}, far_el2", out(reg) far_el2) };
+    far_el2
+}
+
+pub fn get_hpfar_el2() -> u64 {
+    let hpfar_el2: u64;
+    unsafe { asm!("mrs {}, hpfar_el2", out(reg) hpfar_el2) };
+    hpfar_el2
+}
+
+pub unsafe fn set_sp_el1(sp_el1: u64) {
+    unsafe { asm!("msr sp_el1, {}", in(reg) sp_el1) };
+}

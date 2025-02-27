@@ -9,6 +9,7 @@ mod drivers {
     pub mod pl011;
 }
 mod elf;
+mod exception;
 mod memory_allocator;
 mod paging;
 mod registers;
@@ -69,6 +70,8 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     paging::map_address_stage2(0x40000000, 0x40000000, 0x80000000, true, true)
         .expect("Failed to map memory");
 
+    exception::setup_exception();
+
     setup_hypervisor_registers();
 
     unsafe {
@@ -76,12 +79,24 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         asm::set_spsr_el2(SPSR_EL2_M_EL1H);
         /* ジャンプ先のアドレス */
         asm::set_elr_el2(el1_main as *const fn() as usize as u64);
+        /* EL1 用のスタックポインタ */
+        asm::set_sp_el1(
+            (allocate_pages(1, paging::PAGE_SHIFT).unwrap() + paging::PAGE_SIZE) as u64,
+        );
         /* eret で el1_main に */
         asm::eret();
     }
 }
 
 extern "C" fn el1_main() {
+    for i in 0..3 {
+        let _ = unsafe { core::ptr::read_volatile((0x1000 + i as usize) as *const u8) };
+        unsafe { core::ptr::write_volatile((0x1000 + i as usize) as *mut u8, i) };
+    }
+    for i in 0..3 {
+        let _ = unsafe { core::ptr::read_volatile((0x1000 + (i << 3) as usize) as *const u64) };
+        unsafe { core::ptr::write_volatile((0x1000 + (i << 3) as usize) as *mut u64, i) };
+    }
     loop {
         unsafe {
             asm!("wfi");
