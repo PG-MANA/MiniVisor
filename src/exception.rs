@@ -204,10 +204,7 @@ pub fn setup_exception() {
 }
 
 extern "C" fn synchronous_handler(registers: *mut Registers) {
-    println!("Synchronous Exception!");
-    println!("Fault at {:#X}", asm::get_elr_el2());
     let esr_el2 = asm::get_esr_el2();
-    println!("ESR_EL2: {:#X}", esr_el2);
     let ec = esr_el2 & ESR_EL2_EC;
     match ec {
         ESR_EL2_EC_DATA_ABORT => data_abort_handler(unsafe { &mut *registers }, esr_el2),
@@ -239,15 +236,21 @@ fn data_abort_handler(registers: &mut Registers, esr_el2: u64) {
         << crate::paging::PAGE_SHIFT)
         | (asm::get_far_el2() & ((1 << crate::paging::PAGE_SHIFT) - 1));
 
-    println!(
-        "{:#X} {} {}{}({} Bits)(Value: {:#X})",
-        address,
-        if is_write_access { "<=" } else { "=>" },
-        if is_64bit_register { "X" } else { "W" },
-        register_number,
-        access_width,
-        *register
-    );
+    if (0x9000000..0x9001000).contains(&address) {
+        /* PL011 */
+        use crate::mmio::pl011;
+        let offset = (address - 0x9000000) as usize;
+        if is_write_access {
+            let register_value = if is_64bit_register {
+                *register
+            } else {
+                *register & (u32::MAX as u64)
+            };
+            pl011::mmio_write(offset, access_width, register_value).expect("Failed to handle MMIO");
+        } else {
+            *register = pl011::mmio_read(offset, access_width).expect("Failed to handle MMIO");
+        }
+    }
     unsafe { asm::advance_elr_el2() };
 }
 
