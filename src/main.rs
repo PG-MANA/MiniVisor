@@ -11,6 +11,9 @@ mod drivers {
 mod elf;
 mod exception;
 mod memory_allocator;
+mod mmio {
+    pub mod pl011;
+}
 mod paging;
 mod registers;
 
@@ -89,13 +92,10 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
 }
 
 extern "C" fn el1_main() {
-    for i in 0..3 {
-        let _ = unsafe { core::ptr::read_volatile((0x1000 + i as usize) as *const u8) };
-        unsafe { core::ptr::write_volatile((0x1000 + i as usize) as *mut u8, i) };
-    }
-    for i in 0..3 {
-        let _ = unsafe { core::ptr::read_volatile((0x1000 + (i << 3) as usize) as *const u64) };
-        unsafe { core::ptr::write_volatile((0x1000 + (i << 3) as usize) as *mut u64, i) };
+    use crate::serial::SerialDevice;
+    let pl011 = drivers::pl011::Pl011::new(0x9000000, 0x1000).unwrap();
+    for c in b"Hello, world! from EL1 by MMIO PL011" {
+        let _ = pl011.putc(*c);
     }
     loop {
         unsafe {
