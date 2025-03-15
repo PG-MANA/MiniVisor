@@ -5,6 +5,9 @@
 /* HCR_EL2 */
 pub const HCR_EL2_API: u64 = 1 << 41;
 pub const HCR_EL2_RW: u64 = 1 << 31;
+pub const HCR_EL2_AMO: u64 = 1 << 5;
+pub const HCR_EL2_IMO: u64 = 1 << 4;
+pub const HCR_EL2_FMO: u64 = 1 << 3;
 pub const HCR_EL2_VM: u64 = 1 << 0;
 
 /* SPSR_EL2 */
