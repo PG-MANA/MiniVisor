@@ -6,6 +6,7 @@ mod serial;
 mod asm;
 mod dtb;
 mod drivers {
+    pub mod gicv3;
     pub mod pl011;
 }
 mod elf;
@@ -17,6 +18,7 @@ mod mmio {
 mod paging;
 mod registers;
 
+use drivers::gicv3;
 use registers::*;
 
 use core::arch::asm;
@@ -74,6 +76,8 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         .expect("Failed to map memory");
 
     exception::setup_exception();
+    let distributor = init_gic_distributor(&dtb);
+    let redistributor = init_gic_redistributor(&dtb);
 
     setup_hypervisor_registers();
 
@@ -161,7 +165,7 @@ fn init_serial_port(dtb: &dtb::Dtb) -> Result<(), usize> {
 
 pub fn setup_hypervisor_registers() {
     /* HCR_EL2 */
-    let hcr_el2 = HCR_EL2_RW | HCR_EL2_API | HCR_EL2_VM;
+    let hcr_el2 = HCR_EL2_RW | HCR_EL2_API | HCR_EL2_AMO | HCR_EL2_IMO | HCR_EL2_FMO | HCR_EL2_VM;
     unsafe { asm::set_hcr_el2(hcr_el2) };
 }
 
@@ -241,4 +245,22 @@ pub fn allocate_pages(
 pub fn free_pages(address: usize, number_of_pages: usize) {
     let _ = unsafe { (&raw mut MEMORY_ALLOCATOR).as_mut().unwrap() }
         .free(address, number_of_pages << paging::PAGE_SHIFT);
+}
+
+fn init_gic_distributor(dtb: &dtb::Dtb) -> gicv3::GicDistributor {
+    let gic_node = dtb.search_node_by_compatible(b"arm,gic-v3", None).unwrap();
+    let (base_address, size) = dtb.read_reg_property(&gic_node, 0).unwrap();
+    println!("GIC Distributor's Base Address: {:#X}", base_address);
+    let gic_distributor = gicv3::GicDistributor::new(base_address, size).unwrap();
+    gic_distributor.init();
+    gic_distributor
+}
+
+fn init_gic_redistributor(dtb: &dtb::Dtb) -> gicv3::GicRedistributor {
+    let gic_node = dtb.search_node_by_compatible(b"arm,gic-v3", None).unwrap();
+    let (base_address, size) = dtb.read_reg_property(&gic_node, 1).unwrap();
+    println!("GIC Redistributor's Base Address: {:#X}", base_address);
+    let gic_redistributor = gicv3::get_self_redistributor(base_address, size).unwrap();
+    gic_redistributor.init();
+    gic_redistributor
 }

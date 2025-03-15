@@ -104,3 +104,50 @@ pub fn get_hpfar_el2() -> u64 {
 pub unsafe fn set_sp_el1(sp_el1: u64) {
     unsafe { asm!("msr sp_el1, {}", in(reg) sp_el1) };
 }
+
+pub fn get_mpidr_el1() -> u64 {
+    let mpidr_el1: u64;
+    unsafe { asm!("mrs {}, mpidr_el1", out(reg) mpidr_el1) };
+    mpidr_el1
+}
+
+pub const fn mpidr_to_affinity(mpidr: u64) -> u64 {
+    mpidr & !((1 << 31) | (1 << 30))
+}
+
+pub fn get_packed_affinity() -> u32 {
+    let mpidr = mpidr_to_affinity(get_mpidr_el1());
+    ((mpidr & ((1 << 24) - 1)) | ((mpidr & (0xff << 32)) >> (32 - 24))) as u32
+}
+
+pub fn get_icc_sre_el2() -> u64 {
+    let icc_sre_el2: u64;
+    unsafe { asm!("mrs {}, icc_sre_el2", out(reg) icc_sre_el2) };
+    icc_sre_el2
+}
+
+pub unsafe fn set_icc_sre_el2(icc_sre_el2: u64) {
+    unsafe { asm!("msr icc_sre_el2, {}", in(reg) icc_sre_el2) };
+}
+
+pub unsafe fn set_icc_igrpen1_el1(icc_igrpen1_el1: u64) {
+    unsafe { asm!("msr icc_igrpen1_el1, {}", in(reg) icc_igrpen1_el1) };
+}
+
+pub unsafe fn set_icc_pmr_el1(icc_pmr_el1: u64) {
+    unsafe { asm!("msr icc_pmr_el1, {}", in(reg) icc_pmr_el1) };
+}
+
+pub unsafe fn set_icc_bpr1_el1(icc_bpr1_el1: u64) {
+    unsafe { asm!("msr icc_bpr1_el1, {}", in(reg) icc_bpr1_el1) };
+}
+
+pub unsafe fn set_icc_eoir1_el1(icc_eoir1_el1: u64) {
+    unsafe { asm!("msr icc_eoir1_el1, {}", in(reg) icc_eoir1_el1) };
+}
+
+pub fn get_icc_iar1_el1() -> u64 {
+    let icc_iar1_el1: u64;
+    unsafe { asm!("mrs {}, icc_iar1_el1", out(reg) icc_iar1_el1) };
+    icc_iar1_el1
+}
