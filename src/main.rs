@@ -79,6 +79,11 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let distributor = init_gic_distributor(&dtb);
     let redistributor = init_gic_redistributor(&dtb);
 
+    enable_serial_port_interrupt(
+        unsafe { (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref() },
+        &distributor,
+    );
+
     setup_hypervisor_registers();
 
     unsafe {
@@ -97,7 +102,7 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
 
 extern "C" fn el1_main() {
     use crate::serial::SerialDevice;
-    let pl011 = drivers::pl011::Pl011::new(0x9000000, 0x1000).unwrap();
+    let pl011 = drivers::pl011::Pl011::new(0x9000000, 0x1000, 0).unwrap();
     for c in b"Hello, world! from EL1 by MMIO PL011" {
         let _ = pl011.putc(*c);
     }
@@ -153,7 +158,17 @@ fn init_serial_port(dtb: &dtb::Dtb) -> Result<(), usize> {
     let Some((pl011_base, pl011_range)) = dtb.read_reg_property(&pl011, 0) else {
         return Err(6);
     };
-    let Ok(pl011) = drivers::pl011::Pl011::new(pl011_base, pl011_range) else {
+
+    let interrupts =
+        dtb.read_property_as_u32_array(&dtb.get_property(&pl011, b"interrupts").unwrap());
+    let mut interrupt_number = 0;
+    if u32::from_be(interrupts[0]) == gicv3::DTB_GIC_SPI
+        && u32::from_be(interrupts[2]) == gicv3::DTB_GIC_LEVEL
+    {
+        interrupt_number = gicv3::GIC_SPI_BASE + u32::from_be(interrupts[1]);
+    }
+
+    let Ok(pl011) = drivers::pl011::Pl011::new(pl011_base, pl011_range, interrupt_number) else {
         return Err(7);
     };
     unsafe { (&raw mut PL011_DEVICE).write(MaybeUninit::new(pl011)) };
@@ -263,4 +278,22 @@ fn init_gic_redistributor(dtb: &dtb::Dtb) -> gicv3::GicRedistributor {
     let gic_redistributor = gicv3::get_self_redistributor(base_address, size).unwrap();
     gic_redistributor.init();
     gic_redistributor
+}
+
+fn enable_serial_port_interrupt(
+    pl011: &drivers::pl011::Pl011,
+    distributor: &gicv3::GicDistributor,
+) {
+    let int_id = pl011.interrupt_number;
+    if int_id == 0 {
+        println!("PL011 does not support interrupt.");
+        return;
+    }
+    distributor.set_group(int_id, gicv3::GicGroup::NonSecureGroup1);
+    distributor.set_priority(int_id, 0x00);
+    distributor.set_routing(int_id, false, asm::get_mpidr_el1());
+    distributor.set_trigger_mode(int_id, true);
+    distributor.set_pending(int_id, false);
+    distributor.set_enable(int_id, true);
+    pl011.enable_interrupt();
 }
