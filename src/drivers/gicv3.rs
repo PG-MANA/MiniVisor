@@ -4,6 +4,10 @@
 
 use crate::asm;
 
+pub const DTB_GIC_LEVEL: u32 = 4;
+pub const DTB_GIC_SPI: u32 = 0;
+pub const GIC_SPI_BASE: u32 = 32;
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum GicGroup {
     NonSecureGroup1,
