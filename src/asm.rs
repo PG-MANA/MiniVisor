@@ -151,3 +151,7 @@ pub fn get_icc_iar1_el1() -> u64 {
     unsafe { asm!("mrs {}, icc_iar1_el1", out(reg) icc_iar1_el1) };
     icc_iar1_el1
 }
+
+pub unsafe fn invalidate_cache(address: usize) {
+    unsafe { asm!("dc ivac, {}", in(reg) address) };
+}
