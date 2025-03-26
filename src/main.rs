@@ -8,6 +8,8 @@ mod dtb;
 mod drivers {
     pub mod gicv3;
     pub mod pl011;
+    pub mod virtio;
+    pub mod virtio_blk;
 }
 mod elf;
 mod exception;
@@ -18,7 +20,7 @@ mod mmio {
 mod paging;
 mod registers;
 
-use drivers::gicv3;
+use drivers::{gicv3, virtio_blk};
 use registers::*;
 
 use core::arch::asm;
@@ -83,6 +85,16 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         unsafe { (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref() },
         &distributor,
     );
+
+    let mut virtblk = init_virtio_blk(&dtb).unwrap();
+    /* 読み込みのテスト */
+    let mut buffer: [u8; 512] = [0; 512];
+    virtblk
+        .read(&mut buffer as *mut _ as usize, 0, 512)
+        .expect("Failed to read first 512bytes");
+    println!("{:#X?}", buffer);
+    let boot_signature = [buffer[510], buffer[511]];
+    assert_eq!(u16::from_le_bytes(boot_signature), 0xAA55); /* BOOT Signature */
 
     setup_hypervisor_registers();
 
@@ -296,4 +308,24 @@ fn enable_serial_port_interrupt(
     distributor.set_pending(int_id, false);
     distributor.set_enable(int_id, true);
     pl011.enable_interrupt();
+}
+
+fn init_virtio_blk(dtb: &dtb::Dtb) -> Option<virtio_blk::VirtioBlk> {
+    let mut virtio = None;
+    loop {
+        virtio = dtb.search_node_by_compatible(b"virtio,mmio", virtio.as_ref());
+        match &virtio {
+            Some(virtio) => {
+                if dtb.is_node_operational(virtio) {
+                    let (base_address, _) = dtb.read_reg_property(virtio, 0).unwrap();
+                    if let Ok(blk) = virtio_blk::VirtioBlk::new(base_address) {
+                        return Some(blk);
+                    }
+                }
+            }
+            None => {
+                return None;
+            }
+        }
+    }
 }
