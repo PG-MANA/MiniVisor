@@ -13,6 +13,7 @@ mod drivers {
 }
 mod elf;
 mod exception;
+mod fat32;
 mod memory_allocator;
 mod mmio {
     pub mod pl011;
@@ -87,14 +88,7 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     );
 
     let mut virtblk = init_virtio_blk(&dtb).unwrap();
-    /* 読み込みのテスト */
-    let mut buffer: [u8; 512] = [0; 512];
-    virtblk
-        .read(&mut buffer as *mut _ as usize, 0, 512)
-        .expect("Failed to read first 512bytes");
-    println!("{:#X?}", buffer);
-    let boot_signature = [buffer[510], buffer[511]];
-    assert_eq!(u16::from_le_bytes(boot_signature), 0xAA55); /* BOOT Signature */
+    init_fat32(&mut virtblk);
 
     setup_hypervisor_registers();
 
@@ -328,4 +322,45 @@ fn init_virtio_blk(dtb: &dtb::Dtb) -> Option<virtio_blk::VirtioBlk> {
             }
         }
     }
+}
+
+pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) {
+    #[repr(C)]
+    struct PartitionTableEntry {
+        boot_flag: u8,
+        first_sector: [u8; 3],
+        partition_type: u8,
+        last_sector: [u8; 3],
+        first_sector_lba: u32,
+        number_of_sectors: u32,
+    }
+    const PARTITION_TABLE_BASE: usize = 0x1BE;
+    /* MBRの読み込み */
+    let mut mbr: [u8; 512] = [0; 512];
+    blk.read(&mut mbr as *mut _ as usize, 0, 512)
+        .expect("Failed to read first 512bytes");
+    /* BOOT Signatureの確認 */
+    assert_eq!(u16::from_le_bytes([mbr[510], mbr[511]]), 0xAA55);
+
+    /* パーテイションテーブルの解析 */
+    let partition_table = unsafe {
+        &*(&mbr[PARTITION_TABLE_BASE] as *const _ as usize as *const [PartitionTableEntry; 4])
+    };
+    let mut fat32 = Err(());
+    for e in partition_table {
+        if e.partition_type == 0x0C {
+            fat32 = fat32::Fat32::new(blk, e.first_sector_lba as usize, 512);
+            break;
+        }
+    }
+
+    /* ファイルのリストアップとmini.elfの読み込み */
+    let fat32 = fat32.expect("The FAT32 Partition is not found!");
+    fat32.list_files();
+    let file_info = fat32.search_file("MINI.ELF").unwrap();
+    let elf_data: [u8; 512] = [0u8; 512];
+    fat32
+        .read(&file_info, blk, &elf_data as *const _ as usize, 0, 512)
+        .expect("Failed to read");
+    println!("{:#X?}", elf_data);
 }
