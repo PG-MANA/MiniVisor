@@ -101,10 +101,6 @@ pub fn get_hpfar_el2() -> u64 {
     hpfar_el2
 }
 
-pub unsafe fn set_sp_el1(sp_el1: u64) {
-    unsafe { asm!("msr sp_el1, {}", in(reg) sp_el1) };
-}
-
 pub fn get_mpidr_el1() -> u64 {
     let mpidr_el1: u64;
     unsafe { asm!("mrs {}, mpidr_el1", out(reg) mpidr_el1) };
@@ -154,4 +150,18 @@ pub fn get_icc_iar1_el1() -> u64 {
 
 pub unsafe fn invalidate_cache(address: usize) {
     unsafe { asm!("dc ivac, {}", in(reg) address) };
+}
+
+pub fn get_midr_el1() -> u64 {
+    let midr_el1: u64;
+    unsafe { asm!("mrs {}, midr_el1", out(reg) midr_el1) };
+    midr_el1
+}
+
+pub unsafe fn set_vmpidr_el2(vmpidr_el2: u64) {
+    unsafe { asm!("msr vmpidr_el2, {}", in(reg) vmpidr_el2) };
+}
+
+pub unsafe fn set_vpidr_el2(vpidr_el2: u64) {
+    unsafe { asm!("msr vpidr_el2, {}", in(reg) vpidr_el2) };
 }
