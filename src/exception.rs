@@ -5,6 +5,7 @@ use crate::asm;
 use crate::drivers::gicv3::*;
 use crate::registers::*;
 use crate::serial::SerialDevice;
+use crate::vm;
 
 use core::arch::global_asm;
 
@@ -238,21 +239,21 @@ fn data_abort_handler(registers: &mut Registers, esr_el2: u64) {
         << crate::paging::PAGE_SHIFT)
         | (asm::get_far_el2() & ((1 << crate::paging::PAGE_SHIFT) - 1));
 
-    if (0x9000000..0x9001000).contains(&address) {
-        /* PL011 */
-        use crate::mmio::pl011;
-        let offset = (address - 0x9000000) as usize;
-        if is_write_access {
-            let register_value = if is_64bit_register {
-                *register
-            } else {
-                *register & (u32::MAX as u64)
-            };
-            pl011::mmio_write(offset, access_width, register_value).expect("Failed to handle MMIO");
+    if is_write_access {
+        let register_value = if is_64bit_register {
+            *register
         } else {
-            *register = pl011::mmio_read(offset, access_width).expect("Failed to handle MMIO");
-        }
+            *register & (u32::MAX as u64)
+        };
+        vm::get_current_vm()
+            .handle_mmio_write(address as usize, access_width, register_value)
+            .expect("Failed to handle MMIO");
+    } else {
+        *register = vm::get_current_vm()
+            .handle_mmio_read(address as usize, access_width)
+            .expect("Failed to handle MMIO");
     }
+
     unsafe { asm::advance_elr_el2() };
 }
 

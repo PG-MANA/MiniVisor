@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 #[macro_use]
 mod serial;
 mod asm;
@@ -20,19 +22,23 @@ mod mmio {
 }
 mod paging;
 mod registers;
+mod vm;
 
 use drivers::{gicv3, virtio_blk};
-use registers::*;
 
-use core::arch::asm;
+use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::slice;
+
+struct GlobalAllocator {}
 
 /// グローバル変数置き場
 static mut PL011_DEVICE: MaybeUninit<drivers::pl011::Pl011> = MaybeUninit::uninit();
 static mut MEMORY_ALLOCATOR: memory_allocator::MemoryAllocator =
     memory_allocator::MemoryAllocator::new();
+#[global_allocator]
+static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {};
 
 /// 定数
 const STACK_SIZE: usize = 0x10000;
@@ -73,11 +79,6 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let elf_address = str_to_usize(arg_1).expect("Failed to convert the address");
     setup_memory(&dtb, dtb_address, elf_address, stack_pointer);
 
-    /* Stage 2 Translation の初期化 */
-    paging::init_stage2_translation_table();
-    paging::map_address_stage2(0x40000000, 0x40000000, 0x80000000, true, true)
-        .expect("Failed to map memory");
-
     exception::setup_exception();
     let distributor = init_gic_distributor(&dtb);
     let redistributor = init_gic_redistributor(&dtb);
@@ -90,33 +91,9 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let mut virtblk = init_virtio_blk(&dtb).unwrap();
     init_fat32(&mut virtblk);
 
-    setup_hypervisor_registers();
+    vm::create_vm();
 
-    unsafe {
-        /* EL1h で動作する */
-        asm::set_spsr_el2(SPSR_EL2_M_EL1H);
-        /* ジャンプ先のアドレス */
-        asm::set_elr_el2(el1_main as *const fn() as usize as u64);
-        /* EL1 用のスタックポインタ */
-        asm::set_sp_el1(
-            (allocate_pages(1, paging::PAGE_SHIFT).unwrap() + paging::PAGE_SIZE) as u64,
-        );
-        /* eret で el1_main に */
-        asm::eret();
-    }
-}
-
-extern "C" fn el1_main() {
-    use crate::serial::SerialDevice;
-    let pl011 = drivers::pl011::Pl011::new(0x9000000, 0x1000, 0).unwrap();
-    for c in b"Hello, world! from EL1 by MMIO PL011" {
-        let _ = pl011.putc(*c);
-    }
-    loop {
-        unsafe {
-            asm!("wfi");
-        }
-    }
+    unimplemented!()
 }
 
 fn str_to_usize(s: &str) -> Option<usize> {
@@ -182,12 +159,6 @@ fn init_serial_port(dtb: &dtb::Dtb) -> Result<(), usize> {
         (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref()
     });
     Ok(())
-}
-
-pub fn setup_hypervisor_registers() {
-    /* HCR_EL2 */
-    let hcr_el2 = HCR_EL2_RW | HCR_EL2_API | HCR_EL2_AMO | HCR_EL2_IMO | HCR_EL2_FMO | HCR_EL2_VM;
-    unsafe { asm::set_hcr_el2(hcr_el2) };
 }
 
 #[panic_handler]
@@ -357,10 +328,30 @@ pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) {
     /* ファイルのリストアップとmini.elfの読み込み */
     let fat32 = fat32.expect("The FAT32 Partition is not found!");
     fat32.list_files();
-    let file_info = fat32.search_file("MINI.ELF").unwrap();
-    let elf_data: [u8; 512] = [0u8; 512];
-    fat32
-        .read(&file_info, blk, &elf_data as *const _ as usize, 0, 512)
-        .expect("Failed to read");
-    println!("{:#X?}", elf_data);
+}
+
+unsafe impl GlobalAlloc for GlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        match unsafe {
+            (&raw mut MEMORY_ALLOCATOR)
+                .as_mut()
+                .unwrap()
+                .allocate(layout.size(), layout.align())
+        } {
+            Ok(address) => address as *mut u8,
+            Err(e) => {
+                println!("Failed to allocate memory: {:?}", e);
+                core::ptr::null_mut()
+            }
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let _ = unsafe {
+            (&raw mut MEMORY_ALLOCATOR)
+                .as_mut()
+                .unwrap()
+                .free(ptr as usize, layout.size())
+        };
+    }
 }
