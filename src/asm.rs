@@ -22,8 +22,15 @@ pub unsafe fn set_spsr_el2(spsr_el2: u64) {
     unsafe { asm!("msr spsr_el2, {}", in(reg) spsr_el2) };
 }
 
-pub unsafe fn eret() -> ! {
-    unsafe { asm!("eret", options(noreturn)) }
+pub unsafe fn eret(x0: u64, x1: u64, x2: u64, x3: u64) -> ! {
+    unsafe {
+        asm!("eret",
+             in("x0") x0,
+             in("x1") x1,
+             in("x2") x2,
+             in("x3") x3,
+             options(noreturn))
+    }
 }
 
 pub fn get_stack_pointer() -> u64 {
