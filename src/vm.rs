@@ -3,6 +3,8 @@
 //!
 
 use crate::asm;
+use crate::drivers::virtio_blk::VirtioBlk;
+use crate::fat32::Fat32;
 use crate::mmio::pl011::Pl011Mmio;
 use crate::paging::*;
 use crate::registers::*;
@@ -27,6 +29,20 @@ pub struct VM {
     ram_physical_base_address: usize,
     ram_size: usize,
     mmio_handlers: LinkedList<MmioEntry>,
+}
+
+#[repr(C)]
+struct KernelHeader {
+    code0: u32,
+    code1: u32,
+    text_offset: u64,
+    image_size: u64,
+    flags: u64,
+    res2: u64,
+    res3: u64,
+    res4: u64,
+    magic: u32,
+    res5: u32,
 }
 
 static mut VM_LIST: LinkedList<VM> = LinkedList::new();
@@ -73,6 +89,16 @@ impl VM {
         }
         Err(())
     }
+
+    pub fn get_physical_address(&self, virtual_address: usize) -> Option<usize> {
+        if (self.ram_virtual_base_address..(self.ram_virtual_base_address + self.ram_size))
+            .contains(&virtual_address)
+        {
+            Some(virtual_address - self.ram_virtual_base_address + self.ram_physical_base_address)
+        } else {
+            None
+        }
+    }
 }
 
 impl MmioEntry {
@@ -85,10 +111,11 @@ impl MmioEntry {
     }
 }
 
-pub fn create_vm() {
+pub fn create_vm(fat32: &Fat32, blk: &mut VirtioBlk) -> (usize, usize) {
     const RAM_VIRTUAL_BASE: usize = 0x40000000;
     /// RAM SIZE: 256MiB
     const RAM_SIZE: usize = 0x10000000;
+    const ALIGN_SIZE: usize = 0x200000;
 
     /* 仮想マシンの基本要素の設定 */
     let ram_physical_address = crate::allocate_pages(RAM_SIZE >> PAGE_SHIFT, PAGE_SHIFT)
@@ -124,8 +151,49 @@ pub fn create_vm() {
         mmio_handlers,
     );
 
+    /* Linux KernelとDevicetreeの読み込み */
+    let kernel = fat32.search_file("IMAGE").unwrap();
+    let dtb = fat32.search_file("DTB").unwrap();
+    let dtb_size = dtb.get_file_size();
+    let kernel_size = kernel.get_file_size();
+    let kernel_virtual_address =
+        ((RAM_VIRTUAL_BASE + dtb_size - 1) & !(ALIGN_SIZE - 1)) + ALIGN_SIZE;
+    let kernel_physical_address = vm.get_physical_address(kernel_virtual_address).unwrap();
+
+    fat32
+        .read(&dtb, blk, ram_physical_address, 0, dtb_size)
+        .expect("Failed to read DTB");
+    fat32
+        .read(&kernel, blk, kernel_physical_address, 0, kernel_size)
+        .expect("Failed to read Kernel");
+
+    /* Linux Kernel Headerの解析 */
+    let header = unsafe { &*(kernel_physical_address as *const KernelHeader) };
+    if header.magic != 0x644D5241 {
+        panic!("Invalid Kernel Magic: {:#X}", header.magic);
+    }
+    let mut text_offset = header.text_offset;
+    let image_size = header.image_size;
+    if image_size == 0 {
+        text_offset = 0x80000;
+    }
+
     /* VM構造体のリストへの追加 */
     unsafe { (&raw mut VM_LIST).as_mut().unwrap().push_back(vm) };
+
+    (
+        kernel_virtual_address + text_offset as usize,
+        RAM_VIRTUAL_BASE,
+    )
+}
+
+pub fn boot_vm(entry_point: usize, argument: usize) -> ! {
+    unsafe {
+        /* 仮想マシンの起動 */
+        asm::set_spsr_el2(SPSR_EL2_M_EL1H);
+        asm::set_elr_el2(entry_point as u64);
+        asm::eret(argument as u64, 0, 0, 0);
+    }
 }
 
 fn setup_hypervisor_registers() {
