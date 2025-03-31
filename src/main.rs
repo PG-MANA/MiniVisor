@@ -89,11 +89,11 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     );
 
     let mut virtblk = init_virtio_blk(&dtb).unwrap();
-    init_fat32(&mut virtblk);
+    let fat32 = init_fat32(&mut virtblk);
 
-    vm::create_vm();
+    let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk);
 
-    unimplemented!()
+    vm::boot_vm(boot_address, argument)
 }
 
 fn str_to_usize(s: &str) -> Option<usize> {
@@ -295,7 +295,7 @@ fn init_virtio_blk(dtb: &dtb::Dtb) -> Option<virtio_blk::VirtioBlk> {
     }
 }
 
-pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) {
+pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) -> fat32::Fat32 {
     #[repr(C)]
     struct PartitionTableEntry {
         boot_flag: u8,
@@ -325,9 +325,10 @@ pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) {
         }
     }
 
-    /* ファイルのリストアップとmini.elfの読み込み */
     let fat32 = fat32.expect("The FAT32 Partition is not found!");
     fat32.list_files();
+
+    fat32
 }
 
 unsafe impl GlobalAlloc for GlobalAllocator {
