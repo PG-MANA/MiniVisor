@@ -18,10 +18,12 @@ mod exception;
 mod fat32;
 mod memory_allocator;
 mod mmio {
+    pub mod gicv3;
     pub mod pl011;
 }
 mod paging;
 mod registers;
+mod vgic;
 mod vm;
 
 use drivers::{gicv3, virtio_blk};
@@ -91,7 +93,7 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let mut virtblk = init_virtio_blk(&dtb).unwrap();
     let fat32 = init_fat32(&mut virtblk);
 
-    let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk);
+    let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk, &redistributor);
 
     vm::boot_vm(boot_address, argument)
 }

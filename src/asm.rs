@@ -172,3 +172,53 @@ pub unsafe fn set_vmpidr_el2(vmpidr_el2: u64) {
 pub unsafe fn set_vpidr_el2(vpidr_el2: u64) {
     unsafe { asm!("msr vpidr_el2, {}", in(reg) vpidr_el2) };
 }
+
+pub unsafe fn set_icc_sgi1r_el1(icc_sgi1r_el1: u64) {
+    unsafe { asm!("msr icc_sgi1r_el1, {}", in(reg) icc_sgi1r_el1) };
+}
+
+pub fn get_ich_eisr_el2() -> u64 {
+    let ich_eisr_el2: u64;
+    unsafe { asm!("mrs {}, ich_eisr_el2", out(reg) ich_eisr_el2) };
+    ich_eisr_el2
+}
+
+pub fn get_ich_vtr_el2() -> u64 {
+    let ich_vtr_el2: u64;
+    unsafe { asm!("mrs {}, ich_vtr_el2", out(reg) ich_vtr_el2) };
+    ich_vtr_el2
+}
+
+pub unsafe fn set_ich_hcr_el2(ich_hcr_el2: u64) {
+    unsafe { asm!("msr ich_hcr_el2, {}", in(reg) ich_hcr_el2) };
+}
+
+pub fn get_ich_lr0_el2() -> u64 {
+    let ich_lr0_el2: u64;
+    unsafe { asm!("mrs {}, ich_lr0_el2", out(reg) ich_lr0_el2) };
+    ich_lr0_el2
+}
+
+pub unsafe fn set_ich_lr0_el2(ich_lr0_el2: u64) {
+    unsafe { asm!("msr ich_lr0_el2, {}", in(reg) ich_lr0_el2) };
+}
+
+pub fn get_ich_lr1_el2() -> u64 {
+    let ich_lr1_el2: u64;
+    unsafe { asm!("mrs {}, ich_lr1_el2", out(reg) ich_lr1_el2) };
+    ich_lr1_el2
+}
+
+pub unsafe fn set_ich_lr1_el2(ich_lr1_el2: u64) {
+    unsafe { asm!("msr ich_lr1_el2, {}", in(reg) ich_lr1_el2) };
+}
+
+pub fn get_ich_lr2_el2() -> u64 {
+    let ich_lr2_el2: u64;
+    unsafe { asm!("mrs {}, ich_lr2_el2", out(reg) ich_lr2_el2) };
+    ich_lr2_el2
+}
+
+pub unsafe fn set_ich_lr2_el2(ich_lr2_el2: u64) {
+    unsafe { asm!("msr ich_lr2_el2, {}", in(reg) ich_lr2_el2) };
+}

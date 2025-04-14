@@ -3,8 +3,10 @@
 //!
 use crate::asm;
 use crate::drivers::gicv3::*;
+use crate::mmio::gicv3;
 use crate::registers::*;
 use crate::serial::SerialDevice;
+use crate::vgic;
 use crate::vm;
 
 use core::arch::global_asm;
@@ -259,7 +261,6 @@ fn data_abort_handler(registers: &mut Registers, esr_el2: u64) {
 
 extern "C" fn irq_handler() {
     let (interrupt_number, group) = GicRedistributor::get_acknowledge();
-    println!("Interrupt Number: {interrupt_number}");
     if interrupt_number
         == unsafe {
             (&raw mut crate::PL011_DEVICE)
@@ -281,6 +282,10 @@ extern "C" fn irq_handler() {
             .unwrap()
             .unwrap() as char
         );
+    } else if interrupt_number == vgic::MAINTENANCE_INTERRUPT_INTID {
+        vgic::maintenance_interrupt_handler();
+    } else if interrupt_number == gicv3::INJECT_INTERRUPT_INT_ID {
+        gicv3::inject_interrupt_handler();
     }
     GicRedistributor::send_eoi(interrupt_number, group);
 }
