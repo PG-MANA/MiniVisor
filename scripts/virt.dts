@@ -3,6 +3,7 @@
 / {
 	#size-cells = <0x02>;
 	#address-cells = <0x02>;
+	interrupt-parent = <0x8005>;
 
 	memory@40000000 {
 		reg = <0x00 0x40000000 0x00 0x10000000>;
@@ -14,6 +15,16 @@
 		clocks = <0x8000 0x8000>;
 		reg = <0x00 0x9000000 0x00 0x1000>;
 		compatible = "arm,pl011\0arm,primecell";
+	};
+
+	intc@8000000 {
+		#interrupt-cells = <0x03>;
+		#redistributor-regions = <0x01>;
+		phandle = <0x8005>;
+		interrupts = <0x01 0x09 0x04>;
+		reg = <0x00 0x8000000 0x00 0x10000 0x00 0x80a0000 0x00 0x20000>;
+		compatible = "arm,gic-v3";
+		interrupt-controller;
 	};
 
 	cpus {
