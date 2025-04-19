@@ -222,3 +222,21 @@ pub fn get_ich_lr2_el2() -> u64 {
 pub unsafe fn set_ich_lr2_el2(ich_lr2_el2: u64) {
     unsafe { asm!("msr ich_lr2_el2, {}", in(reg) ich_lr2_el2) };
 }
+
+pub unsafe fn set_icc_dir_el1(icc_dir_el1: u64) {
+    unsafe { asm!("msr icc_dir_el1, {}", in(reg) icc_dir_el1) };
+}
+
+pub fn get_icc_ctlr_el1() -> u64 {
+    let icc_ctlr_el1: u64;
+    unsafe { asm!("mrs {}, icc_ctlr_el1", out(reg) icc_ctlr_el1) };
+    icc_ctlr_el1
+}
+
+pub unsafe fn set_icc_ctlr_el1(icc_ctlr_el1: u64) {
+    unsafe { asm!("msr icc_ctlr_el1, {}", in(reg) icc_ctlr_el1) };
+}
+
+pub unsafe fn set_cntvoff_el2(cntvoff_el2: u64) {
+    unsafe { asm!("msr cntvoff_el2, {}", in(reg) cntvoff_el2) };
+}
