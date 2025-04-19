@@ -3,7 +3,7 @@
 //!
 
 use crate::asm;
-use crate::drivers::{gicv3::GicRedistributor, virtio_blk::VirtioBlk};
+use crate::drivers::{generic_timer, gicv3::GicRedistributor, virtio_blk::VirtioBlk};
 use crate::fat32::Fat32;
 use crate::mmio::{
     gicv3::{GicDistributorMmio, GicRedistributorMmio},
@@ -157,6 +157,9 @@ pub fn create_vm(
 
     /* Virtual GICの初期化 */
     vgic::init_vgic(gic_redistributor);
+
+    /* Generic Timerの初期化 */
+    generic_timer::init_generic_timer_local(gic_redistributor);
 
     /* MMIO ハンドラの初期化 */
     let mut mmio_handlers = LinkedList::new();
