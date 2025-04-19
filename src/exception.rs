@@ -2,7 +2,7 @@
 //! 割り込み制御
 //!
 use crate::asm;
-use crate::drivers::gicv3::*;
+use crate::drivers::{generic_timer, gicv3::*};
 use crate::mmio::gicv3;
 use crate::registers::*;
 use crate::serial::SerialDevice;
@@ -206,6 +206,7 @@ pub fn setup_exception() {
         static exception_table: *const u8;
     }
     unsafe { asm::set_vbar_el2(&exception_table as *const _ as usize as u64) };
+    unsafe { asm::set_icc_ctlr_el1(asm::get_icc_ctlr_el1() | ICC_CTLR1_EL1_EOI_MODE) };
 }
 
 extern "C" fn synchronous_handler(registers: *mut Registers) {
@@ -261,6 +262,7 @@ fn data_abort_handler(registers: &mut Registers, esr_el2: u64) {
 
 extern "C" fn irq_handler() {
     let (interrupt_number, group) = GicRedistributor::get_acknowledge();
+    let mut deactivate = true;
     if interrupt_number
         == unsafe {
             (&raw mut crate::PL011_DEVICE)
@@ -286,6 +288,12 @@ extern "C" fn irq_handler() {
         vgic::maintenance_interrupt_handler();
     } else if interrupt_number == gicv3::INJECT_INTERRUPT_INT_ID {
         gicv3::inject_interrupt_handler();
+    } else if interrupt_number == unsafe { generic_timer::GENERIC_TIMER_PHYSICAL_INT_ID } {
+        generic_timer::generic_timer_interrupt_handler();
+        deactivate = false; /* Deactivate はVGICが処理する */
     }
-    GicRedistributor::send_eoi(interrupt_number, group);
+    GicRedistributor::drop_priority(interrupt_number, group);
+    if deactivate {
+        GicRedistributor::deactivate(interrupt_number);
+    }
 }

@@ -6,6 +6,8 @@ use crate::asm;
 
 pub const DTB_GIC_LEVEL: u32 = 4;
 pub const DTB_GIC_SPI: u32 = 0;
+pub const DTB_GIC_PPI: u32 = 1;
+pub const GIC_PPI_BASE: u32 = 16;
 pub const GIC_SPI_BASE: u32 = 32;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -267,12 +269,16 @@ impl GicRedistributor {
         (asm::get_icc_iar1_el1() as u32, GicGroup::NonSecureGroup1)
     }
 
-    pub fn send_eoi(int_id: u32, group: GicGroup) {
+    pub fn drop_priority(int_id: u32, group: GicGroup) {
         match group {
             GicGroup::NonSecureGroup1 => {
                 unsafe { asm::set_icc_eoir1_el1(int_id as u64) };
             }
         }
+    }
+
+    pub fn deactivate(int_id: u32) {
+        unsafe { asm::set_icc_dir_el1(int_id as u64) };
     }
 
     fn wait_rwp(&self) {

@@ -8,6 +8,7 @@ mod serial;
 mod asm;
 mod dtb;
 mod drivers {
+    pub mod generic_timer;
     pub mod gicv3;
     pub mod pl011;
     pub mod virtio;
@@ -26,7 +27,7 @@ mod registers;
 mod vgic;
 mod vm;
 
-use drivers::{gicv3, virtio_blk};
+use drivers::{generic_timer, gicv3, virtio_blk};
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
@@ -89,6 +90,8 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         unsafe { (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref() },
         &distributor,
     );
+
+    generic_timer::init_generic_timer_global(&dtb);
 
     let mut virtblk = init_virtio_blk(&dtb).unwrap();
     let fat32 = init_fat32(&mut virtblk);
