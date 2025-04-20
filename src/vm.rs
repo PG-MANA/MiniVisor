@@ -11,6 +11,7 @@ use crate::mmio::{
 };
 use crate::paging::*;
 use crate::registers::*;
+use crate::serial::SerialDevice;
 use crate::vgic;
 
 use alloc::boxed::Box;
@@ -35,6 +36,7 @@ pub struct VM {
     mmio_handlers: LinkedList<MmioEntry>,
     gic_distributor_mmio: *mut GicDistributorMmio,
     gic_redistributor_mmio: *mut GicRedistributorMmio,
+    pl011_mmio: *mut Pl011Mmio,
 }
 
 #[repr(C)]
@@ -55,6 +57,7 @@ static mut VM_LIST: LinkedList<VM> = LinkedList::new();
 static mut NEXT_VM_ID: usize = 0;
 
 impl VM {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         vm_id: usize,
         ram_virtual_base_address: usize,
@@ -63,6 +66,7 @@ impl VM {
         mmio_handlers: LinkedList<MmioEntry>,
         gic_distributor_mmio: *mut GicDistributorMmio,
         gic_redistributor_mmio: *mut GicRedistributorMmio,
+        pl011_mmio: *mut Pl011Mmio,
     ) -> Self {
         Self {
             vm_id,
@@ -72,6 +76,7 @@ impl VM {
             mmio_handlers,
             gic_distributor_mmio,
             gic_redistributor_mmio,
+            pl011_mmio,
         }
     }
 
@@ -116,6 +121,10 @@ impl VM {
 
     pub fn get_gic_redistributor_mmio(&self) -> *mut GicRedistributorMmio {
         self.gic_redistributor_mmio
+    }
+
+    pub fn get_pl011_mmio(&self) -> *mut Pl011Mmio {
+        self.pl011_mmio
     }
 }
 
@@ -165,11 +174,9 @@ pub fn create_vm(
     let mut mmio_handlers = LinkedList::new();
 
     /* PL011 */
-    mmio_handlers.push_back(MmioEntry::new(
-        0x9000000,
-        0x1000,
-        Box::new(Pl011Mmio::new()),
-    ));
+    let mut pl011_mmio = Box::new(Pl011Mmio::new());
+    let pl011_mmio_ptr = pl011_mmio.as_mut() as *mut _;
+    mmio_handlers.push_back(MmioEntry::new(0x9000000, 0x1000, pl011_mmio));
 
     /* GIC Distributor */
     let mut gic_distributor_mmio = Box::new(GicDistributorMmio::new());
@@ -198,6 +205,7 @@ pub fn create_vm(
         mmio_handlers,
         gic_distributor_mmio_ptr,
         gic_redistributor_mmio_ptr,
+        pl011_mmio_ptr,
     );
 
     /* Linux KernelとDevicetreeの読み込み */
@@ -257,7 +265,27 @@ fn setup_hypervisor_registers() {
     unsafe { asm::set_hcr_el2(hcr_el2) };
 }
 
+pub fn input_uart(device: &dyn SerialDevice) {
+    let c = device.getc();
+    if c.is_err() {
+        println!("Failed to get a character");
+        return;
+    }
+    let c = c.unwrap().unwrap_or(0);
+    if c == 0 {
+        return;
+    }
+
+    let vm = get_active_vm();
+    unsafe { (*vm.get_pl011_mmio()).push(c, &mut *vm.get_gic_distributor_mmio()) };
+}
+
 /// 今は一つだけ
 pub fn get_current_vm() -> &'static mut VM {
+    unsafe { (&raw mut VM_LIST).as_mut().unwrap().front_mut().unwrap() }
+}
+
+/// 今は一つだけ
+pub fn get_active_vm() -> &'static mut VM {
     unsafe { (&raw mut VM_LIST).as_mut().unwrap().front_mut().unwrap() }
 }
