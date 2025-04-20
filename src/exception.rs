@@ -5,7 +5,6 @@ use crate::asm;
 use crate::drivers::{generic_timer, gicv3::*};
 use crate::mmio::gicv3;
 use crate::registers::*;
-use crate::serial::SerialDevice;
 use crate::vgic;
 use crate::vm;
 
@@ -272,18 +271,12 @@ extern "C" fn irq_handler() {
         }
         .interrupt_number
     {
-        println!(
-            "PL011: {}",
-            unsafe {
-                (&raw mut crate::PL011_DEVICE)
-                    .as_ref()
-                    .unwrap()
-                    .assume_init_ref()
-            }
-            .getc()
-            .unwrap()
-            .unwrap() as char
-        );
+        vm::input_uart(unsafe {
+            (&raw mut crate::PL011_DEVICE)
+                .as_ref()
+                .unwrap()
+                .assume_init_ref()
+        });
     } else if interrupt_number == vgic::MAINTENANCE_INTERRUPT_INTID {
         vgic::maintenance_interrupt_handler();
     } else if interrupt_number == gicv3::INJECT_INTERRUPT_INT_ID {
