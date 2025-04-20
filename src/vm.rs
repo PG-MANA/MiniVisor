@@ -8,6 +8,7 @@ use crate::fat32::Fat32;
 use crate::mmio::{
     gicv3::{GicDistributorMmio, GicRedistributorMmio},
     pl011::Pl011Mmio,
+    virtio_blk::VirtioBlkMmio,
 };
 use crate::paging::*;
 use crate::registers::*;
@@ -177,6 +178,17 @@ pub fn create_vm(
     let mut pl011_mmio = Box::new(Pl011Mmio::new());
     let pl011_mmio_ptr = pl011_mmio.as_mut() as *mut _;
     mmio_handlers.push_back(MmioEntry::new(0x9000000, 0x1000, pl011_mmio));
+
+    /* Virtio-Blk */
+    let file_name = [b'D', b'I', b'S', b'K', b'0' + vm_id as u8];
+    let disk_file = fat32
+        .search_file(core::str::from_utf8(&file_name).unwrap())
+        .expect("Failed to find Disk");
+    mmio_handlers.push_back(MmioEntry::new(
+        0xa000000,
+        0x0200,
+        Box::new(VirtioBlkMmio::new(disk_file)),
+    ));
 
     /* GIC Distributor */
     let mut gic_distributor_mmio = Box::new(GicDistributorMmio::new());

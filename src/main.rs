@@ -21,6 +21,7 @@ mod memory_allocator;
 mod mmio {
     pub mod gicv3;
     pub mod pl011;
+    pub mod virtio_blk;
 }
 mod paging;
 mod registers;
@@ -40,6 +41,8 @@ struct GlobalAllocator {}
 static mut PL011_DEVICE: MaybeUninit<drivers::pl011::Pl011> = MaybeUninit::uninit();
 static mut MEMORY_ALLOCATOR: memory_allocator::MemoryAllocator =
     memory_allocator::MemoryAllocator::new();
+static mut VIRTIO_BLK: MaybeUninit<virtio_blk::VirtioBlk> = MaybeUninit::uninit();
+static mut FAT32: MaybeUninit<fat32::Fat32> = MaybeUninit::uninit();
 #[global_allocator]
 static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {};
 
@@ -97,6 +100,11 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let fat32 = init_fat32(&mut virtblk);
 
     let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk, &redistributor);
+
+    unsafe {
+        (&raw mut VIRTIO_BLK).as_mut().unwrap().write(virtblk);
+        (&raw mut FAT32).as_mut().unwrap().write(fat32);
+    }
 
     vm::boot_vm(boot_address, argument)
 }

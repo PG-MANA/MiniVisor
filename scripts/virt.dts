@@ -28,6 +28,13 @@
 		interrupt-controller;
 	};
 
+	virtio_mmio@a000000 {
+		dma-coherent;
+		interrupts = <0x00 0x08 0x01>;
+		reg = <0x00 0xa000000 0x00 0x200>;
+		compatible = "virtio,mmio";
+	};
+
 	timer {
 		interrupts = <0x01 0x0d 0xf04 0x01 0x0e 0xf04 0x01 0x0b 0xf04 0x01 0x0a 0xf04>;
 		always-on;
@@ -55,7 +62,7 @@
 
 	chosen {
 		stdout-path = "/pl011@9000000";
-		bootargs = "earlycon=pl011,0x9000000 console=ttyAMA0";
+		bootargs = "earlycon=pl011,0x9000000 console=ttyAMA0 root=/dev/vda";
 	};
 };
 
