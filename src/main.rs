@@ -24,6 +24,7 @@ mod mmio {
     pub mod virtio_blk;
 }
 mod paging;
+mod psci;
 mod registers;
 mod vgic;
 mod vm;
@@ -105,6 +106,14 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
         (&raw mut VIRTIO_BLK).as_mut().unwrap().write(virtblk);
         (&raw mut FAT32).as_mut().unwrap().write(fat32);
     }
+
+    /* PSCIのバージョンチェック */
+    let (major_version, minor_version) = psci::check_psci_version().expect("PSCI is not supported");
+    println!("PSCI version {major_version}.{minor_version}");
+
+    launch_cpu(&dtb);
+
+    unimplemented!();
 
     vm::boot_vm(boot_address, argument)
 }
@@ -368,4 +377,36 @@ unsafe impl GlobalAlloc for GlobalAllocator {
                 .free(ptr as usize, layout.size())
         };
     }
+}
+
+pub fn launch_cpu(dtb: &dtb::Dtb) {
+    let mut cpu_node = None;
+    let current_affinity = asm::mpidr_to_affinity(asm::get_mpidr_el1());
+    while let Some(cpu) = dtb.search_node(b"cpu", cpu_node.as_ref()) {
+        if let Some((affinity, _)) = dtb.read_reg_property(&cpu, 0)
+            && current_affinity != affinity as u64
+        {
+            println!("CPU_ON: {:#X}", affinity);
+            let stack_address = allocate_pages(STACK_SIZE >> paging::PAGE_SHIFT, 0)
+                .expect("Failed to allocate memory")
+                + STACK_SIZE;
+            if let Err(e) = psci::cpu_on(
+                affinity as u64,
+                asm::core_entry as *const fn() as usize as u64,
+                stack_address as u64,
+            ) {
+                println!("Failed to start CPU(Affinity: {:#X}): {:?}", affinity, e);
+                free_pages(stack_address - STACK_SIZE, STACK_SIZE >> paging::PAGE_SHIFT);
+            }
+        }
+        cpu_node = Some(cpu);
+    }
+}
+
+extern "C" fn core_main() -> ! {
+    println!(
+        "Hello, world! from {:#X}",
+        asm::mpidr_to_affinity(asm::get_mpidr_el1())
+    );
+    loop {}
 }
