@@ -2,7 +2,7 @@
 //! アセンブリを記述したモジュール
 //!
 
-use core::arch::asm;
+use core::arch::{asm, naked_asm};
 
 pub fn get_currentel() -> u64 {
     let currentel: u64;
@@ -239,4 +239,26 @@ pub unsafe fn set_icc_ctlr_el1(icc_ctlr_el1: u64) {
 
 pub unsafe fn set_cntvoff_el2(cntvoff_el2: u64) {
     unsafe { asm!("msr cntvoff_el2, {}", in(reg) cntvoff_el2) };
+}
+
+pub unsafe fn smc(mut x0: u64, x1: u64, x2: u64, x3: u64) -> u64 {
+    unsafe {
+        asm!("smc 0",
+        inout("x0") x0,
+        in("x1") x1,
+        in("x2") x2,
+        in("x3") x3,
+        clobber_abi("C")
+        )
+    };
+    x0
+}
+
+#[unsafe(naked)]
+pub extern "C" fn core_entry() -> ! {
+    naked_asm!("
+            mov sp, x0
+            b   {}",
+        sym crate::core_main
+    )
 }
