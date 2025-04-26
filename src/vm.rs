@@ -5,6 +5,7 @@
 use crate::asm;
 use crate::drivers::{generic_timer, gicv3::GicRedistributor, virtio_blk::VirtioBlk};
 use crate::fat32::Fat32;
+use crate::lock::Mutex;
 use crate::mmio::{
     gicv3::{GicDistributorMmio, GicRedistributorMmio},
     pl011::Pl011Mmio,
@@ -15,8 +16,11 @@ use crate::registers::*;
 use crate::serial::SerialDevice;
 use crate::vgic;
 
-use alloc::boxed::Box;
+use core::marker::Send;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use alloc::collections::linked_list::LinkedList;
+use alloc::sync::Arc;
 
 pub trait MmioHandler {
     fn read(&mut self, offset: usize, access_width: u64) -> Result<u64, ()>;
@@ -26,7 +30,7 @@ pub trait MmioHandler {
 pub struct MmioEntry {
     base_address: usize,
     length: usize,
-    handler: Box<dyn MmioHandler>,
+    handler: Arc<Mutex<dyn MmioHandler + Send>>,
 }
 
 pub struct VM {
@@ -35,9 +39,9 @@ pub struct VM {
     ram_physical_base_address: usize,
     ram_size: usize,
     mmio_handlers: LinkedList<MmioEntry>,
-    gic_distributor_mmio: *mut GicDistributorMmio,
-    gic_redistributor_mmio: *mut GicRedistributorMmio,
-    pl011_mmio: *mut Pl011Mmio,
+    gic_distributor_mmio: Arc<Mutex<GicDistributorMmio>>,
+    gic_redistributor_mmio: Arc<Mutex<GicRedistributorMmio>>,
+    pl011_mmio: Arc<Mutex<Pl011Mmio>>,
 }
 
 #[repr(C)]
@@ -54,8 +58,8 @@ struct KernelHeader {
     res5: u32,
 }
 
-static mut VM_LIST: LinkedList<VM> = LinkedList::new();
-static mut NEXT_VM_ID: usize = 0;
+static VM_LIST: Mutex<LinkedList<Arc<VM>>> = Mutex::new(LinkedList::new());
+static NEXT_VM_ID: AtomicUsize = AtomicUsize::new(0);
 
 impl VM {
     #[allow(clippy::too_many_arguments)]
@@ -65,9 +69,9 @@ impl VM {
         ram_physical_base_address: usize,
         ram_size: usize,
         mmio_handlers: LinkedList<MmioEntry>,
-        gic_distributor_mmio: *mut GicDistributorMmio,
-        gic_redistributor_mmio: *mut GicRedistributorMmio,
-        pl011_mmio: *mut Pl011Mmio,
+        gic_distributor_mmio: Arc<Mutex<GicDistributorMmio>>,
+        gic_redistributor_mmio: Arc<Mutex<GicRedistributorMmio>>,
+        pl011_mmio: Arc<Mutex<Pl011Mmio>>,
     ) -> Self {
         Self {
             vm_id,
@@ -81,25 +85,29 @@ impl VM {
         }
     }
 
-    pub fn handle_mmio_read(&mut self, address: usize, access_width: u64) -> Result<u64, ()> {
-        for e in &mut self.mmio_handlers {
+    pub fn handle_mmio_read(&self, address: usize, access_width: u64) -> Result<u64, ()> {
+        for e in &self.mmio_handlers {
             if e.base_address <= address && address < (e.base_address + e.length) {
-                return e.handler.read(address - e.base_address, access_width);
+                return e
+                    .handler
+                    .lock()
+                    .read(address - e.base_address, access_width);
             }
         }
         Err(())
     }
 
     pub fn handle_mmio_write(
-        &mut self,
+        &self,
         address: usize,
         access_width: u64,
         value: u64,
     ) -> Result<(), ()> {
-        for e in &mut self.mmio_handlers {
+        for e in &self.mmio_handlers {
             if e.base_address <= address && address < (e.base_address + e.length) {
                 return e
                     .handler
+                    .lock()
                     .write(address - e.base_address, access_width, value);
             }
         }
@@ -116,21 +124,25 @@ impl VM {
         }
     }
 
-    pub fn get_gic_distributor_mmio(&self) -> *mut GicDistributorMmio {
-        self.gic_distributor_mmio
+    pub fn get_gic_distributor_mmio(&self) -> &Mutex<GicDistributorMmio> {
+        &self.gic_distributor_mmio
     }
 
-    pub fn get_gic_redistributor_mmio(&self) -> *mut GicRedistributorMmio {
-        self.gic_redistributor_mmio
+    pub fn get_gic_redistributor_mmio(&self) -> &Mutex<GicRedistributorMmio> {
+        &self.gic_redistributor_mmio
     }
 
-    pub fn get_pl011_mmio(&self) -> *mut Pl011Mmio {
-        self.pl011_mmio
+    pub fn get_pl011_mmio(&self) -> &Mutex<Pl011Mmio> {
+        &self.pl011_mmio
     }
 }
 
 impl MmioEntry {
-    pub fn new(base_address: usize, length: usize, handler: Box<dyn MmioHandler>) -> Self {
+    pub fn new(
+        base_address: usize,
+        length: usize,
+        handler: Arc<Mutex<dyn MmioHandler + Send>>,
+    ) -> Self {
         Self {
             base_address,
             length,
@@ -152,8 +164,7 @@ pub fn create_vm(
     /* 仮想マシンの基本要素の設定 */
     let ram_physical_address = crate::allocate_pages(RAM_SIZE >> PAGE_SHIFT, PAGE_SHIFT)
         .expect("Failed to allocate memory for VM.");
-    let vm_id = unsafe { NEXT_VM_ID };
-    unsafe { NEXT_VM_ID += 1 };
+    let vm_id = NEXT_VM_ID.fetch_add(1, Ordering::Relaxed);
     let cpu_mpidr = asm::get_mpidr_el1();
 
     /* 仮想化に関するハードウェアの設定 */
@@ -175,9 +186,8 @@ pub fn create_vm(
     let mut mmio_handlers = LinkedList::new();
 
     /* PL011 */
-    let mut pl011_mmio = Box::new(Pl011Mmio::new());
-    let pl011_mmio_ptr = pl011_mmio.as_mut() as *mut _;
-    mmio_handlers.push_back(MmioEntry::new(0x9000000, 0x1000, pl011_mmio));
+    let pl011_mmio = Arc::new(Mutex::new(Pl011Mmio::new()));
+    mmio_handlers.push_back(MmioEntry::new(0x9000000, 0x1000, pl011_mmio.clone()));
 
     /* Virtio-Blk */
     let file_name = [b'D', b'I', b'S', b'K', b'0' + vm_id as u8];
@@ -187,25 +197,23 @@ pub fn create_vm(
     mmio_handlers.push_back(MmioEntry::new(
         0xa000000,
         0x0200,
-        Box::new(VirtioBlkMmio::new(disk_file)),
+        Arc::new(Mutex::new(VirtioBlkMmio::new(disk_file))),
     ));
 
     /* GIC Distributor */
-    let mut gic_distributor_mmio = Box::new(GicDistributorMmio::new());
-    let gic_distributor_mmio_ptr = gic_distributor_mmio.as_mut() as *mut _;
+    let gic_distributor_mmio = Arc::new(Mutex::new(GicDistributorMmio::new()));
     mmio_handlers.push_back(MmioEntry::new(
         0x8000000,
         GicDistributorMmio::MMIO_SIZE,
-        gic_distributor_mmio,
+        gic_distributor_mmio.clone(),
     ));
 
     /* GIC Redistributor */
-    let mut gic_redistributor_mmio = Box::new(GicRedistributorMmio::new(cpu_mpidr));
-    let gic_redistributor_mmio_ptr = gic_redistributor_mmio.as_mut() as *mut _;
+    let gic_redistributor_mmio = Arc::new(Mutex::new(GicRedistributorMmio::new(cpu_mpidr)));
     mmio_handlers.push_back(MmioEntry::new(
         0x80a0000,
         GicRedistributorMmio::MMIO_SIZE,
-        gic_redistributor_mmio,
+        gic_redistributor_mmio.clone(),
     ));
 
     /* VM構造体の作成 */
@@ -215,9 +223,9 @@ pub fn create_vm(
         ram_physical_address,
         RAM_SIZE,
         mmio_handlers,
-        gic_distributor_mmio_ptr,
-        gic_redistributor_mmio_ptr,
-        pl011_mmio_ptr,
+        gic_distributor_mmio,
+        gic_redistributor_mmio,
+        pl011_mmio,
     );
 
     /* Linux KernelとDevicetreeの読み込み */
@@ -248,7 +256,7 @@ pub fn create_vm(
     }
 
     /* VM構造体のリストへの追加 */
-    unsafe { (&raw mut VM_LIST).as_mut().unwrap().push_back(vm) };
+    VM_LIST.lock().push_back(Arc::new(vm));
 
     (
         kernel_virtual_address + text_offset as usize,
@@ -289,15 +297,17 @@ pub fn input_uart(device: &dyn SerialDevice) {
     }
 
     let vm = get_active_vm();
-    unsafe { (*vm.get_pl011_mmio()).push(c, &mut *vm.get_gic_distributor_mmio()) };
+    vm.get_pl011_mmio()
+        .lock()
+        .push(c, &mut vm.get_gic_distributor_mmio().lock());
 }
 
 /// 今は一つだけ
-pub fn get_current_vm() -> &'static mut VM {
-    unsafe { (&raw mut VM_LIST).as_mut().unwrap().front_mut().unwrap() }
+pub fn get_current_vm() -> Arc<VM> {
+    VM_LIST.lock().front().unwrap().clone()
 }
 
 /// 今は一つだけ
-pub fn get_active_vm() -> &'static mut VM {
-    unsafe { (&raw mut VM_LIST).as_mut().unwrap().front_mut().unwrap() }
+pub fn get_active_vm() -> Arc<VM> {
+    VM_LIST.lock().front().unwrap().clone()
 }
