@@ -33,6 +33,7 @@ mod vm;
 
 use drivers::{generic_timer, gicv3, pl011, virtio_blk};
 use lock::Mutex;
+use psci::PsciErrorCodes;
 use serial::SerialDevice;
 
 use core::alloc::{GlobalAlloc, Layout};
@@ -54,6 +55,7 @@ static mut FAT32: MaybeUninit<fat32::Fat32> = MaybeUninit::uninit();
 static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {};
 static CONSOLE: Mutex<console::Console> = Mutex::new(console::Console::new());
 static IS_CONSOLE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static mut DTB: MaybeUninit<dtb::Dtb> = MaybeUninit::uninit();
 
 /// 定数
 const STACK_SIZE: usize = 0x10000;
@@ -109,13 +111,14 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk, &redistributor);
 
     *VIRTIO_BLK.lock() = virtblk;
-    unsafe { (&raw mut FAT32).as_mut().unwrap().write(fat32) };
+    unsafe {
+        (&raw mut FAT32).as_mut().unwrap().write(fat32);
+        (&raw mut DTB).as_mut().unwrap().write(dtb);
+    }
 
     /* PSCIのバージョンチェック */
     let (major_version, minor_version) = psci::check_psci_version().expect("PSCI is not supported");
     println!("PSCI version {major_version}.{minor_version}");
-
-    launch_cpu(&dtb);
 
     vm::boot_vm(boot_address, argument)
 }
@@ -372,36 +375,49 @@ unsafe impl GlobalAlloc for GlobalAllocator {
     }
 }
 
-pub fn launch_cpu(dtb: &dtb::Dtb) {
+pub fn launch_cpu() -> bool {
+    let dtb = unsafe { (&raw const DTB).as_ref().unwrap().assume_init_ref() };
     let mut cpu_node = None;
     let current_affinity = asm::mpidr_to_affinity(asm::get_mpidr_el1());
+    let stack_address = allocate_pages(STACK_SIZE >> paging::PAGE_SHIFT, 0)
+        .expect("Failed to allocate memory")
+        + STACK_SIZE;
     while let Some(cpu) = dtb.search_node(b"cpu", cpu_node.as_ref()) {
         if let Some((affinity, _)) = dtb.read_reg_property(&cpu, 0)
             && current_affinity != affinity as u64
         {
-            println!("CPU_ON: {:#X}", affinity);
-            let stack_address = allocate_pages(STACK_SIZE >> paging::PAGE_SHIFT, 0)
-                .expect("Failed to allocate memory")
-                + STACK_SIZE;
-            if let Err(e) = psci::cpu_on(
+            match psci::cpu_on(
                 affinity as u64,
                 asm::core_entry as *const fn() as usize as u64,
                 stack_address as u64,
             ) {
-                println!("Failed to start CPU(Affinity: {:#X}): {:?}", affinity, e);
-                free_pages(stack_address - STACK_SIZE, STACK_SIZE >> paging::PAGE_SHIFT);
+                Ok(_) => return true,
+                Err(PsciErrorCodes::AlreadyOn) => { /* 次のノードを探索 */ }
+                Err(e) => {
+                    println!("Failed to start CPU(Affinity: {:#X}): {:?}", affinity, e);
+                }
             }
         }
         cpu_node = Some(cpu);
     }
+    free_pages(stack_address - STACK_SIZE, STACK_SIZE >> paging::PAGE_SHIFT);
+    false
 }
 
 extern "C" fn core_main() -> ! {
-    println!(
-        "Hello, world! from {:#X}",
-        asm::mpidr_to_affinity(asm::get_mpidr_el1())
+    let current_el = asm::get_currentel() >> 2;
+    assert_eq!(current_el, 2);
+
+    exception::setup_exception();
+    let redistributor =
+        init_gic_redistributor(unsafe { (&raw const DTB).as_ref().unwrap().assume_init_ref() });
+
+    let (boot_address, argument) = vm::create_vm(
+        unsafe { (&raw const FAT32).as_ref().unwrap().assume_init_ref() },
+        &mut VIRTIO_BLK.lock(),
+        &redistributor,
     );
-    loop {}
+    vm::boot_vm(boot_address, argument)
 }
 
 fn handle_input(device: &Mutex<dyn SerialDevice>) {

@@ -59,6 +59,7 @@ struct KernelHeader {
 
 static VM_LIST: Mutex<LinkedList<Arc<VM>>> = Mutex::new(LinkedList::new());
 static NEXT_VM_ID: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_VM: Mutex<Option<Arc<VM>>> = Mutex::new(None);
 
 impl VM {
     #[allow(clippy::too_many_arguments)]
@@ -256,6 +257,10 @@ pub fn create_vm(
 
     /* VM構造体のリストへの追加 */
     VM_LIST.lock().push_back(Arc::new(vm));
+    switch_active_vm(vm_id);
+
+    unsafe { asm::set_tpidr_el2(vm_id as u64) };
+    println!("Created VM{vm_id} on the CPU(MPIDR_EL1: {:#X})", cpu_mpidr);
 
     (
         kernel_virtual_address + text_offset as usize,
@@ -291,12 +296,25 @@ pub fn input_uart(c: u8) {
         .push(c, &mut vm.get_gic_distributor_mmio().lock());
 }
 
-/// 今は一つだけ
 pub fn get_current_vm() -> Arc<VM> {
-    VM_LIST.lock().front().unwrap().clone()
+    let vm_id = asm::get_tpidr_el2() as usize;
+    VM_LIST
+        .lock()
+        .iter()
+        .find(|vm| vm.vm_id == vm_id)
+        .unwrap()
+        .clone()
 }
 
-/// 今は一つだけ
 pub fn get_active_vm() -> Arc<VM> {
-    VM_LIST.lock().front().unwrap().clone()
+    ACTIVE_VM.lock().clone().unwrap()
+}
+
+pub fn switch_active_vm(vm_id: usize) -> bool {
+    if let Some(vm) = VM_LIST.lock().iter_mut().find(|vm| vm.vm_id == vm_id) {
+        *ACTIVE_VM.lock() = Some(vm.clone());
+        true
+    } else {
+        false
+    }
 }

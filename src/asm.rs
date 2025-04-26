@@ -288,3 +288,13 @@ pub unsafe fn set_daif(daif: u64) {
         )
     };
 }
+
+pub fn get_tpidr_el2() -> u64 {
+    let tpidr_el2: u64;
+    unsafe { asm!("mrs {}, tpidr_el2", out(reg) tpidr_el2) };
+    tpidr_el2
+}
+
+pub unsafe fn set_tpidr_el2(tpidr_el2: u64) {
+    unsafe { asm!("msr tpidr_el2, {}", in(reg) tpidr_el2) };
+}

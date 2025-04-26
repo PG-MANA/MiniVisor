@@ -3,6 +3,7 @@
 //!
 
 use core::str::SplitWhitespace;
+use core::sync::atomic::Ordering;
 
 pub struct Console {
     buffer: [u8; Self::BUFFER_SIZE],
@@ -13,8 +14,12 @@ pub struct Console {
 impl Console {
     const BUFFER_SIZE: usize = 64;
     #[allow(clippy::type_complexity)]
-    const COMMAND_LIST: [(&str, fn(SplitWhitespace)); 2] =
-        [("echo", Self::echo), ("poweroff", Self::power_off)];
+    const COMMAND_LIST: [(&str, fn(SplitWhitespace) -> bool); 4] = [
+        ("boot", Self::boot_vm),
+        ("switch", Self::switch_vm),
+        ("echo", Self::echo),
+        ("poweroff", Self::power_off),
+    ];
 
     pub const fn new() -> Self {
         Self {
@@ -55,11 +60,16 @@ impl Console {
             return;
         };
         if let Some((_, f)) = Self::COMMAND_LIST.iter().find(|&&(c, _)| c == command) {
-            f(command_list);
+            if f(command_list) {
+                self.reset_buffer();
+            } else {
+                /* 自動的にコンソールを無効化 */
+                crate::IS_CONSOLE_ACTIVE.fetch_xor(true, Ordering::Relaxed);
+            }
         } else {
             println!("{} is not defined", command);
+            self.reset_buffer();
         }
-        self.reset_buffer();
     }
 
     pub fn reset_buffer(&mut self) {
@@ -69,15 +79,45 @@ impl Console {
 
     /* 各コマンドの実装 */
 
-    pub fn echo(list: SplitWhitespace) {
+    pub fn echo(list: SplitWhitespace) -> bool {
         for arg in list {
             print!("{} ", arg);
         }
         println!();
+        true
     }
 
-    pub fn power_off(_: SplitWhitespace) {
+    pub fn power_off(_: SplitWhitespace) -> bool {
         println!("The host machine will shutdown!");
         crate::psci::system_off()
+    }
+
+    pub fn boot_vm(_: SplitWhitespace) -> bool {
+        if crate::launch_cpu() {
+            /* Active VM は自動的に切り替わる */
+            println!("Booted a new VM");
+            false
+        } else {
+            println!("Failed to boot a VM");
+            true
+        }
+    }
+
+    pub fn switch_vm(mut args: SplitWhitespace) -> bool {
+        let Some(arg) = args.next() else {
+            println!("Missing vm_id\nUsage: switch vm_id");
+            return true;
+        };
+        let Some(vm_id) = crate::str_to_usize(arg) else {
+            println!("\"{arg}\" is not a number");
+            return true;
+        };
+        if crate::vm::switch_active_vm(vm_id) {
+            println!("VM{vm_id} is actived");
+            false
+        } else {
+            println!("VM{vm_id} is not available");
+            true
+        }
     }
 }
