@@ -200,8 +200,8 @@ impl GicDistributorMmio {
 
 pub fn inject_interrupt_handler() {
     let vm = vm::get_current_vm();
-    let distributor = unsafe { &mut *vm.get_gic_distributor_mmio() };
-    let redistributor = unsafe { &mut *vm.get_gic_redistributor_mmio() };
+    let mut distributor = vm.get_gic_distributor_mmio().lock();
+    let mut redistributor = vm.get_gic_redistributor_mmio().lock();
     while let Some(entry) = distributor.to_inject_interrupt.pop_front() {
         vgic::add_virtual_interrupt(entry);
     }

@@ -158,13 +158,12 @@ impl VirtioBlkMmio {
                     status = VIRTIO_BLK_S_IOERR;
                     continue;
                 };
-                let virtio_blk =
-                    unsafe { (&raw mut VIRTIO_BLK).as_mut().unwrap().assume_init_mut() };
+                let mut virtio_blk = VIRTIO_BLK.lock();
                 let fat32 = unsafe { (&raw mut FAT32).as_mut().unwrap().assume_init_mut() };
                 let result = if is_write {
-                    fat32.write(&self.file, virtio_blk, address, offset, size as usize)
+                    fat32.write(&self.file, &mut virtio_blk, address, offset, size as usize)
                 } else {
-                    fat32.read(&self.file, virtio_blk, address, offset, size as usize)
+                    fat32.read(&self.file, &mut virtio_blk, address, offset, size as usize)
                 };
                 if result.is_err() {
                     println!(
@@ -187,7 +186,9 @@ impl VirtioBlkMmio {
             self.write_used(descriptor_id, total_size);
         }
         self.interrupt_status |= 1;
-        unsafe { &mut *get_current_vm().get_gic_distributor_mmio() }
+        get_current_vm()
+            .get_gic_distributor_mmio()
+            .lock()
             .trigger_interrupt(VIRTIO_BLK_INT_ID, None);
     }
 }
@@ -298,3 +299,5 @@ impl MmioHandler for VirtioBlkMmio {
         Ok(())
     }
 }
+
+unsafe impl core::marker::Send for VirtioBlkMmio {}

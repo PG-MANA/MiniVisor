@@ -8,7 +8,6 @@ use core::ptr;
 
 pub struct Pl011 {
     base_address: usize,
-    pub interrupt_number: u32,
 }
 
 const UART_SIZE: usize = 0x1000;
@@ -32,14 +31,15 @@ const UART_CR_UARTEN: u16 = 1;
 const UART_IMSC_RXIM: u16 = 1 << 4;
 
 impl Pl011 {
-    pub fn new(base_address: usize, range: usize, interrupt_number: u32) -> Result<Self, ()> {
+    pub const fn invalid() -> Self {
+        Self { base_address: 0 }
+    }
+
+    pub fn new(base_address: usize, range: usize) -> Result<Self, ()> {
         if range < UART_SIZE {
             return Err(());
         }
-        Ok(Self {
-            base_address,
-            interrupt_number,
-        })
+        Ok(Self { base_address })
     }
 
     fn is_tx_fifo_full(&self) -> bool {
