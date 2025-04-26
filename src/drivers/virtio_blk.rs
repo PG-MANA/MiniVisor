@@ -29,6 +29,16 @@ pub struct VirtioBlk {
 }
 
 impl VirtioBlk {
+    pub const fn invalid() -> Self {
+        Self {
+            base_address: 0,
+            descriptors: core::ptr::null_mut(),
+            avail: core::ptr::null_mut(),
+            used: core::ptr::null_mut(),
+            free_bitmap: [0; NUMBER_OF_DESCRIPTORS / (u8::BITS as usize)],
+        }
+    }
+
     pub fn new(base_address: usize) -> Result<Self, ()> {
         if Self::read_register(base_address, VIRTIO_MMIO_MAGIC) != VIRTIO_MMIO_MAGIC_VALUE {
             return Err(());
@@ -261,3 +271,5 @@ impl VirtioBlk {
         self.operation_sync(buffer_address, block_address, length, true)
     }
 }
+
+unsafe impl core::marker::Send for VirtioBlk {}

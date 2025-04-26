@@ -95,12 +95,12 @@ pub fn maintenance_interrupt_handler() {
             let vm = vm::get_current_vm();
             if int_id >= 32 {
                 /* SPI */
-                let distributor = unsafe { &mut *vm.get_gic_distributor_mmio() };
+                let mut distributor = vm.get_gic_distributor_mmio().lock();
                 distributor.change_pending_status(int_id, false);
                 distributor.change_active_status(int_id, false);
             } else {
                 /* SGI / PPI */
-                let redistributor = unsafe { &mut *vm.get_gic_redistributor_mmio() };
+                let mut redistributor = vm.get_gic_redistributor_mmio().lock();
                 redistributor.change_pending_status(int_id, false);
                 redistributor.change_active_status(int_id, false);
             }

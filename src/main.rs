@@ -17,6 +17,7 @@ mod drivers {
 mod elf;
 mod exception;
 mod fat32;
+mod lock;
 mod memory_allocator;
 mod mmio {
     pub mod gicv3;
@@ -29,7 +30,8 @@ mod registers;
 mod vgic;
 mod vm;
 
-use drivers::{generic_timer, gicv3, virtio_blk};
+use drivers::{generic_timer, gicv3, pl011, virtio_blk};
+use lock::Mutex;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
@@ -39,10 +41,11 @@ use core::slice;
 struct GlobalAllocator {}
 
 /// グローバル変数置き場
-static mut PL011_DEVICE: MaybeUninit<drivers::pl011::Pl011> = MaybeUninit::uninit();
-static mut MEMORY_ALLOCATOR: memory_allocator::MemoryAllocator =
-    memory_allocator::MemoryAllocator::new();
-static mut VIRTIO_BLK: MaybeUninit<virtio_blk::VirtioBlk> = MaybeUninit::uninit();
+static PL011_DEVICE: Mutex<pl011::Pl011> = Mutex::new(pl011::Pl011::invalid());
+static mut PL011_INT_ID: u32 = 0;
+static MEMORY_ALLOCATOR: Mutex<memory_allocator::MemoryAllocator> =
+    Mutex::new(memory_allocator::MemoryAllocator::new());
+static VIRTIO_BLK: Mutex<virtio_blk::VirtioBlk> = Mutex::new(virtio_blk::VirtioBlk::invalid());
 static mut FAT32: MaybeUninit<fat32::Fat32> = MaybeUninit::uninit();
 #[global_allocator]
 static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {};
@@ -90,10 +93,7 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     let distributor = init_gic_distributor(&dtb);
     let redistributor = init_gic_redistributor(&dtb);
 
-    enable_serial_port_interrupt(
-        unsafe { (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref() },
-        &distributor,
-    );
+    enable_serial_port_interrupt(&PL011_DEVICE.lock(), &distributor);
 
     generic_timer::init_generic_timer_global(&dtb);
 
@@ -102,10 +102,8 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
 
     let (boot_address, argument) = vm::create_vm(&fat32, &mut virtblk, &redistributor);
 
-    unsafe {
-        (&raw mut VIRTIO_BLK).as_mut().unwrap().write(virtblk);
-        (&raw mut FAT32).as_mut().unwrap().write(fat32);
-    }
+    *VIRTIO_BLK.lock() = virtblk;
+    unsafe { (&raw mut FAT32).as_mut().unwrap().write(fat32) };
 
     /* PSCIのバージョンチェック */
     let (major_version, minor_version) = psci::check_psci_version().expect("PSCI is not supported");
@@ -173,13 +171,12 @@ fn init_serial_port(dtb: &dtb::Dtb) -> Result<(), usize> {
         interrupt_number = gicv3::GIC_SPI_BASE + u32::from_be(interrupts[1]);
     }
 
-    let Ok(pl011) = drivers::pl011::Pl011::new(pl011_base, pl011_range, interrupt_number) else {
+    let Ok(pl011) = pl011::Pl011::new(pl011_base, pl011_range) else {
         return Err(7);
     };
-    unsafe { (&raw mut PL011_DEVICE).write(MaybeUninit::new(pl011)) };
-    serial::init_default_serial_port(unsafe {
-        (&raw mut PL011_DEVICE).as_ref().unwrap().assume_init_ref()
-    });
+    unsafe { PL011_INT_ID = interrupt_number };
+    *PL011_DEVICE.lock() = pl011;
+    serial::init_default_serial_port(&PL011_DEVICE);
     Ok(())
 }
 
@@ -199,7 +196,7 @@ pub fn setup_memory(dtb: &dtb::Dtb, dtb_address: usize, elf_address: usize, stac
         .read_reg_property(&memory, 0)
         .expect("Expected reg entry");
     println!("RAM is [{:#X} ~ {:#X}]", start, start + size);
-    let memory_allocator = unsafe { (&raw mut MEMORY_ALLOCATOR).as_mut().unwrap() };
+    let mut memory_allocator = MEMORY_ALLOCATOR.lock();
     memory_allocator
         .free(start, size)
         .expect("Failed to free the RAM");
@@ -245,7 +242,8 @@ pub fn allocate_pages(
     number_of_pages: usize,
     align: usize,
 ) -> Result<usize, memory_allocator::MemoryError> {
-    match unsafe { (&raw mut MEMORY_ALLOCATOR).as_mut().unwrap() }
+    match MEMORY_ALLOCATOR
+        .lock()
         .allocate(number_of_pages << paging::PAGE_SHIFT, align)
     {
         Ok(a) => Ok(a),
@@ -257,7 +255,8 @@ pub fn allocate_pages(
 }
 
 pub fn free_pages(address: usize, number_of_pages: usize) {
-    let _ = unsafe { (&raw mut MEMORY_ALLOCATOR).as_mut().unwrap() }
+    let _ = MEMORY_ALLOCATOR
+        .lock()
         .free(address, number_of_pages << paging::PAGE_SHIFT);
 }
 
@@ -279,11 +278,8 @@ fn init_gic_redistributor(dtb: &dtb::Dtb) -> gicv3::GicRedistributor {
     gic_redistributor
 }
 
-fn enable_serial_port_interrupt(
-    pl011: &drivers::pl011::Pl011,
-    distributor: &gicv3::GicDistributor,
-) {
-    let int_id = pl011.interrupt_number;
+fn enable_serial_port_interrupt(pl011: &pl011::Pl011, distributor: &gicv3::GicDistributor) {
+    let int_id = unsafe { PL011_INT_ID };
     if int_id == 0 {
         println!("PL011 does not support interrupt.");
         return;
@@ -355,12 +351,10 @@ pub fn init_fat32(blk: &mut virtio_blk::VirtioBlk) -> fat32::Fat32 {
 
 unsafe impl GlobalAlloc for GlobalAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match unsafe {
-            (&raw mut MEMORY_ALLOCATOR)
-                .as_mut()
-                .unwrap()
-                .allocate(layout.size(), layout.align())
-        } {
+        match MEMORY_ALLOCATOR
+            .lock()
+            .allocate(layout.size(), layout.align())
+        {
             Ok(address) => address as *mut u8,
             Err(e) => {
                 println!("Failed to allocate memory: {:?}", e);
@@ -370,12 +364,7 @@ unsafe impl GlobalAlloc for GlobalAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let _ = unsafe {
-            (&raw mut MEMORY_ALLOCATOR)
-                .as_mut()
-                .unwrap()
-                .free(ptr as usize, layout.size())
-        };
+        let _ = MEMORY_ALLOCATOR.lock().free(ptr as usize, layout.size());
     }
 }
 
