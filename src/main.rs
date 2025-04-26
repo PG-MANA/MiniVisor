@@ -6,6 +6,7 @@ extern crate alloc;
 #[macro_use]
 mod serial;
 mod asm;
+mod console;
 mod dtb;
 mod drivers {
     pub mod generic_timer;
@@ -32,11 +33,13 @@ mod vm;
 
 use drivers::{generic_timer, gicv3, pl011, virtio_blk};
 use lock::Mutex;
+use serial::SerialDevice;
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ffi::CStr;
 use core::mem::MaybeUninit;
 use core::slice;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 struct GlobalAllocator {}
 
@@ -49,9 +52,12 @@ static VIRTIO_BLK: Mutex<virtio_blk::VirtioBlk> = Mutex::new(virtio_blk::VirtioB
 static mut FAT32: MaybeUninit<fat32::Fat32> = MaybeUninit::uninit();
 #[global_allocator]
 static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {};
+static CONSOLE: Mutex<console::Console> = Mutex::new(console::Console::new());
+static IS_CONSOLE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// 定数
 const STACK_SIZE: usize = 0x10000;
+const CONSOLE_SWITCH_KEY: u8 = 0x13; /* Ctrl + S */
 
 #[unsafe(no_mangle)]
 extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
@@ -110,8 +116,6 @@ extern "C" fn main(argc: usize, argv: *const *const u8) -> usize {
     println!("PSCI version {major_version}.{minor_version}");
 
     launch_cpu(&dtb);
-
-    unimplemented!();
 
     vm::boot_vm(boot_address, argument)
 }
@@ -398,4 +402,32 @@ extern "C" fn core_main() -> ! {
         asm::mpidr_to_affinity(asm::get_mpidr_el1())
     );
     loop {}
+}
+
+fn handle_input(device: &Mutex<dyn SerialDevice>) {
+    loop {
+        let c = device.lock().getc();
+        if c.is_err() {
+            println!("Failed to get a character");
+            return;
+        }
+        let c = c.unwrap().unwrap_or(0);
+        if c == 0 {
+            return;
+        }
+        if c == CONSOLE_SWITCH_KEY {
+            let old = IS_CONSOLE_ACTIVE.fetch_xor(true, Ordering::Relaxed);
+            if old {
+                /* コンソール無効化: プロンプトを上書き */
+                print!("\r");
+            } else {
+                /* コンソール有効化: プロンプトを出力 */
+                CONSOLE.lock().reset_buffer();
+            }
+        } else if IS_CONSOLE_ACTIVE.load(Ordering::Relaxed) {
+            CONSOLE.lock().write(c);
+        } else {
+            vm::input_uart(c);
+        }
+    }
 }

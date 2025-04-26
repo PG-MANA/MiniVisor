@@ -13,7 +13,6 @@ use crate::mmio::{
 };
 use crate::paging::*;
 use crate::registers::*;
-use crate::serial::SerialDevice;
 use crate::vgic;
 
 use core::marker::Send;
@@ -285,17 +284,7 @@ fn setup_hypervisor_registers() {
     unsafe { asm::set_hcr_el2(hcr_el2) };
 }
 
-pub fn input_uart(device: &dyn SerialDevice) {
-    let c = device.getc();
-    if c.is_err() {
-        println!("Failed to get a character");
-        return;
-    }
-    let c = c.unwrap().unwrap_or(0);
-    if c == 0 {
-        return;
-    }
-
+pub fn input_uart(c: u8) {
     let vm = get_active_vm();
     vm.get_pl011_mmio()
         .lock()

@@ -263,7 +263,7 @@ extern "C" fn irq_handler() {
     let (interrupt_number, group) = GicRedistributor::get_acknowledge();
     let mut deactivate = true;
     if interrupt_number == unsafe { crate::PL011_INT_ID } {
-        vm::input_uart(&*crate::PL011_DEVICE.lock());
+        crate::handle_input(&crate::PL011_DEVICE);
     } else if interrupt_number == vgic::MAINTENANCE_INTERRUPT_INTID {
         vgic::maintenance_interrupt_handler();
     } else if interrupt_number == gicv3::INJECT_INTERRUPT_INT_ID {
