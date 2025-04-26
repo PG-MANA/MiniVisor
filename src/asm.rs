@@ -262,3 +262,29 @@ pub extern "C" fn core_entry() -> ! {
         sym crate::core_main
     )
 }
+
+pub unsafe fn get_daif_and_disable_irq_fiq() -> u64 {
+    let daif: u64;
+    unsafe {
+        asm!("
+            mrs {t},    daif
+            mov {r},    {t}
+            orr {t},    {t}, ( 1 << 7 /* IRQ */ ) | ( 1 << 6 /* FIQ */ )
+            msr daif,   {t}
+            isb",
+        t = out(reg) _ ,
+        r = out(reg) daif
+        )
+    };
+    daif
+}
+
+pub unsafe fn set_daif(daif: u64) {
+    unsafe {
+        asm!("
+            isb
+            msr daif, {}",
+        in(reg) daif
+        )
+    };
+}

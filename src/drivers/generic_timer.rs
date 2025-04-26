@@ -38,10 +38,11 @@ pub fn init_generic_timer_local(redistributor: &gicv3::GicRedistributor) {
 }
 
 pub fn generic_timer_interrupt_handler() {
-    let vm = vm::get_current_vm();
-    let redistributor = unsafe { &mut *vm.get_gic_redistributor_mmio() };
-    redistributor.trigger_interrupt(
-        GENERIC_TIMER_VIRTUAL_INT_ID,
-        Some(unsafe { GENERIC_TIMER_PHYSICAL_INT_ID }),
-    );
+    vm::get_current_vm()
+        .get_gic_redistributor_mmio()
+        .lock()
+        .trigger_interrupt(
+            GENERIC_TIMER_VIRTUAL_INT_ID,
+            Some(unsafe { GENERIC_TIMER_PHYSICAL_INT_ID }),
+        );
 }
